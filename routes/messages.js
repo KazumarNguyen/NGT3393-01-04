@@ -10,54 +10,43 @@ router.get("/", CheckLogin, async function (req, res, next) {
   try {
     let currentUserId = req.user._id;
 
-    // Tìm tất cả các conversation (các user khác nhau mà hiện tại user nhắn tin)
-    const conversations = await messageModel.aggregate([
-      {
-        $match: {
-          $or: [
-            {
-              from: new mongoose.Types.ObjectId(currentUserId),
-              isDeleted: false,
-            },
-            {
-              to: new mongoose.Types.ObjectId(currentUserId),
-              isDeleted: false,
-            },
-          ],
-        },
-      },
-      {
-        $sort: { createdAt: -1 },
-      },
-      {
-        $group: {
-          _id: {
-            $cond: [
-              { $eq: ["$from", new mongoose.Types.ObjectId(currentUserId)] },
-              "$to",
-              "$from",
-            ],
-          },
-          lastMessage: { $first: "$$ROOT" },
-        },
-      },
-      {
-        $lookup: {
-          from: "users",
-          localField: "_id",
-          foreignField: "_id",
-          as: "userInfo",
-        },
-      },
-      {
-        $project: {
-          _id: 1,
-          otherUserId: "$_id",
-          lastMessage: 1,
-          userInfo: { $arrayElemAt: ["$userInfo", 0] },
-        },
-      },
-    ]);
+    // Lấy tất cả message của user hiện tại (sắp xếp từ mới nhất)
+    const messages = await messageModel
+      .find({
+        $or: [
+          { from: currentUserId, isDeleted: false },
+          { to: currentUserId, isDeleted: false },
+        ],
+      })
+      .populate("from", "username email fullName avatarUrl")
+      .populate("to", "username email fullName avatarUrl")
+      .sort({ createdAt: -1 });
+
+    // Tạo object để lưu message cuối cùng của mỗi user
+    const conversationMap = {};
+
+    messages.forEach((message) => {
+      // Xác định userID đối phương
+      const otherUserId =
+        message.from._id.toString() === currentUserId.toString()
+          ? message.to._id.toString()
+          : message.from._id.toString();
+
+      // Nếu chưa có conversation với user này, thêm vào
+      if (!conversationMap[otherUserId]) {
+        conversationMap[otherUserId] = {
+          otherUserId: otherUserId,
+          userInfo:
+            message.from._id.toString() === currentUserId.toString()
+              ? message.to
+              : message.from,
+          lastMessage: message,
+        };
+      }
+    });
+
+    // Chuyển object thành array
+    const conversations = Object.values(conversationMap);
 
     res.send({
       success: true,
